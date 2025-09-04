@@ -16,7 +16,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # -- Ensure deploy folder exists
+      # -- Ensure deploy folder exists with sudo
       - name: Create deploy folder
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -29,7 +29,8 @@ jobs:
             if [ -z "$DEPLOY_DIR" ]; then
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
-            mkdir -p "$DEPLOY_DIR"
+            sudo mkdir -p "$DEPLOY_DIR"
+            sudo chown ${{ secrets.SSH_USER }} "$DEPLOY_DIR"
 
       # -- Upload docker-compose.yml
       - name: Upload docker-compose.yml
@@ -42,7 +43,7 @@ jobs:
           source: "docker-compose.yml"
           target: "${{ secrets.DEPLOY_DIR }}/"
 
-      # -- Write compose.env
+      # -- Write compose.env with sudo
       - name: Write compose.env
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -55,9 +56,9 @@ jobs:
             if [ -z "$DEPLOY_DIR" ]; then
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
-            echo "${{ secrets.COMPOSE_ENV }}" > "$DEPLOY_DIR/compose.env"
+            echo "${{ secrets.COMPOSE_ENV }}" | sudo tee "$DEPLOY_DIR/compose.env" > /dev/null
 
-      # -- Deploy stack
+      # -- Deploy stack with sudo
       - name: Deploy stack
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -71,7 +72,6 @@ jobs:
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
             cd "$DEPLOY_DIR"
-            DOCKER_COMPOSE_CMD="docker compose"
             if ! command -v docker >/dev/null 2>&1; then
               echo "docker not found"
               exit 1
@@ -80,5 +80,5 @@ jobs:
               echo "docker compose not found"
               exit 1
             fi
-            docker compose -f docker-compose.yml pull --ignore-pull-failures || true
-            docker compose -f docker-compose.yml up -d --remove-orphans
+            sudo docker compose -f docker-compose.yml pull --ignore-pull-failures || true
+            sudo docker compose -f docker-compose.yml up -d --remove-orphans
