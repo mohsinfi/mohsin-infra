@@ -1,10 +1,8 @@
 name: Deploy to Ubuntu Docker Host
-
 on:
   push:
     branches:
       - main
-
 permissions:
   contents: read
   id-token: write
@@ -16,7 +14,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # -- Ensure deploy folder exists with sudo
+      # -- Ensure deploy folder exists with proper ownership
       - name: Create deploy folder
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -30,9 +28,10 @@ jobs:
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
             sudo mkdir -p "$DEPLOY_DIR"
-            sudo chown ${{ secrets.SSH_USER }} "$DEPLOY_DIR"
+            sudo chown -R ${{ secrets.SSH_USER }}:${{ secrets.SSH_USER }} "$DEPLOY_DIR"
+            sudo chmod 755 "$DEPLOY_DIR"
 
-      # -- Upload docker-compose.yml
+      # -- Upload docker-compose.yml (Fixed target path)
       - name: Upload docker-compose.yml
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -41,9 +40,9 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "docker-compose.yml"
-          target: "${{ secrets.DEPLOY_DIR }}/"
+          target: "${{ secrets.DEPLOY_DIR || format('/home/{0}/komodo', secrets.SSH_USER) }}"
 
-      # -- Write compose.env with sudo
+      # -- Write compose.env with proper permissions
       - name: Write compose.env
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -57,8 +56,10 @@ jobs:
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
             echo "${{ secrets.COMPOSE_ENV }}" | sudo tee "$DEPLOY_DIR/compose.env" > /dev/null
+            sudo chown ${{ secrets.SSH_USER }}:${{ secrets.SSH_USER }} "$DEPLOY_DIR/compose.env"
+            sudo chmod 644 "$DEPLOY_DIR/compose.env"
 
-      # -- Deploy stack with sudo
+      # -- Deploy stack with proper error handling
       - name: Deploy stack
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -71,14 +72,32 @@ jobs:
             if [ -z "$DEPLOY_DIR" ]; then
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
+            
             cd "$DEPLOY_DIR"
+            
+            # Check if docker is available
             if ! command -v docker >/dev/null 2>&1; then
-              echo "docker not found"
+              echo "Error: docker not found"
               exit 1
             fi
+            
+            # Check if docker compose is available
             if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
-              echo "docker compose not found"
+              echo "Error: docker compose not found"
               exit 1
             fi
+            
+            # Verify files exist
+            if [ ! -f "docker-compose.yml" ]; then
+              echo "Error: docker-compose.yml not found in $DEPLOY_DIR"
+              exit 1
+            fi
+            
+            # Pull images and deploy
+            echo "Pulling images..."
             sudo docker compose -f docker-compose.yml pull --ignore-pull-failures || true
+            
+            echo "Deploying stack..."
             sudo docker compose -f docker-compose.yml up -d --remove-orphans
+            
+            echo "Deployment completed successfully!"
