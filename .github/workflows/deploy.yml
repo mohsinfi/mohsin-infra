@@ -38,7 +38,5 @@ jobs:
             fi
             cd "$DEPLOY_DIR"
             echo "${{ secrets.COMPOSE_ENV }}" > compose.env
-            # Export only valid environment variables (skip comments and empty lines)
-            export $(grep -E "^[A-Z_][A-Z0-9_]*=" compose.env | xargs)
-            sudo docker compose pull --ignore-pull-failures || true
-            sudo docker compose up -d --remove-orphans
+            sudo docker compose -p komodo -f docker-compose.yml --env-file compose.env pull --ignore-pull-failures || true
+            sudo docker compose -p komodo -f docker-compose.yml --env-file compose.env up -d --remove-orphans
