@@ -34,15 +34,14 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT || 22 }}
+          port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-            mkdir -p "${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}"
-            # Write COMPOSE_ENV file (content comes from GitHub secret)
-            cat > "${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}/compose.env" <<'EOF'
-${{ secrets.COMPOSE_ENV }}
-EOF
+            mkdir -p "${{ secrets.DEPLOY_DIR }}"
+            cat > "${{ secrets.DEPLOY_DIR }}/compose.env" <<EOF
+      ${{ secrets.COMPOSE_ENV }}
+      EOF
             ls -l "${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}"
 
       # -- Ensure docker and docker-compose are present and start/upgrade stack
