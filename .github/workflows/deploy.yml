@@ -11,13 +11,12 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy Komodo stack via SSH
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # -- Create deploy folder on remote server
+      # -- Ensure deploy folder exists
       - name: Create deploy folder
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -32,7 +31,7 @@ jobs:
             fi
             mkdir -p "$DEPLOY_DIR"
 
-      # -- Copy docker-compose.yml to server using scp
+      # -- Upload docker-compose.yml
       - name: Upload docker-compose.yml
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -43,7 +42,7 @@ jobs:
           source: "docker-compose.yml"
           target: "${{ secrets.DEPLOY_DIR }}/"
 
-      # -- Write compose.env on remote host
+      # -- Write compose.env
       - name: Write compose.env
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -52,16 +51,14 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            set -e
             DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
             if [ -z "$DEPLOY_DIR" ]; then
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
             echo "${{ secrets.COMPOSE_ENV }}" > "$DEPLOY_DIR/compose.env"
-            ls -l "$DEPLOY_DIR"
 
       # -- Deploy stack
-      - name: Deploy stack (docker compose up)
+      - name: Deploy stack
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -69,24 +66,19 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            set -e
             DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
             if [ -z "$DEPLOY_DIR" ]; then
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
             cd "$DEPLOY_DIR"
+            DOCKER_COMPOSE_CMD="docker compose"
             if ! command -v docker >/dev/null 2>&1; then
-              echo "docker not found - please install docker on the target server"
+              echo "docker not found"
               exit 1
             fi
-            if docker compose version >/dev/null 2>&1; then
-              DOCKER_COMPOSE_CMD="docker compose"
-            elif command -v docker-compose >/dev/null 2>&1; then
-              DOCKER_COMPOSE_CMD="docker-compose"
-            else
-              echo "docker compose not found - please install docker compose plugin or docker-compose binary"
+            if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+              echo "docker compose not found"
               exit 1
             fi
-            $DOCKER_COMPOSE_CMD -f docker-compose.yml pull --ignore-pull-failures || true
-            $DOCKER_COMPOSE_CMD -f docker-compose.yml up -d --remove-orphans
-            $DOCKER_COMPOSE_CMD -f docker-compose.yml ps
+            docker compose -f docker-compose.yml pull --ignore-pull-failures || true
+            docker compose -f docker-compose.yml up -d --remove-orphans
