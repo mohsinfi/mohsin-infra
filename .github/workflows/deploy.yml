@@ -1,0 +1,82 @@
+name: Deploy to Ubuntu Docker Host
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy Komodo stack via SSH
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # -- Copy docker-compose.yml to server using scp (appleboy/scp-action)
+      - name: Upload docker-compose.yml to server
+        uses: appleboy/scp-action@v0.1.8
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker-compose.yml"
+          target: "${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}"
+
+      # -- Write compose.env to server from secret (safe: secret isn't printed)
+      - name: Write compose.env on remote host
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            mkdir -p "${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}"
+            # Write COMPOSE_ENV file (content comes from GitHub secret)
+            cat > "${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}/compose.env" <<'EOF'
+${{ secrets.COMPOSE_ENV }}
+EOF
+            ls -l "${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}"
+
+      # -- Ensure docker and docker-compose are present and start/upgrade stack
+      - name: Deploy stack (docker compose up)
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            DEPLOY_DIR="${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}"
+            cd "$DEPLOY_DIR"
+
+            # ensure docker is available
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "docker not found - please install docker on the target server"
+              exit 1
+            fi
+
+            # use docker compose plugin if available
+            if docker compose version >/dev/null 2>&1; then
+              DOCKER_COMPOSE_CMD="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              DOCKER_COMPOSE_CMD="docker-compose"
+            else
+              echo "docker compose not found - please install docker compose plugin or docker-compose binary"
+              exit 1
+            fi
+
+            # pull images and start
+            $DOCKER_COMPOSE_CMD -f docker-compose.yml pull --ignore-pull-failures || true
+            $DOCKER_COMPOSE_CMD -f docker-compose.yml up -d --remove-orphans
+
+            # show status
+            $DOCKER_COMPOSE_CMD -f docker-compose.yml ps
