@@ -17,8 +17,23 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # -- Copy docker-compose.yml to server using scp (appleboy/scp-action)
-      - name: Upload docker-compose.yml to server
+      # -- Create deploy folder on remote server
+      - name: Create deploy folder
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
+            if [ -z "$DEPLOY_DIR" ]; then
+              DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
+            fi
+            mkdir -p "$DEPLOY_DIR"
+
+      # -- Copy docker-compose.yml to server using scp
+      - name: Upload docker-compose.yml
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -26,16 +41,10 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "docker-compose.yml"
-          script: |
-            # Set DEPLOY_DIR with default if not provided
-            DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
-            if [ -z "$DEPLOY_DIR" ]; then
-              DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
-            fi
-          target: "$DEPLOY_DIR"
+          target: "${{ secrets.DEPLOY_DIR }}/"
 
-      # -- Write compose.env to server from secret (safe: secret isn't printed)
-      - name: Write compose.env on remote host
+      # -- Write compose.env on remote host
+      - name: Write compose.env
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -44,22 +53,14 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-
-            # Set DEPLOY_DIR with default if not provided
             DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
             if [ -z "$DEPLOY_DIR" ]; then
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
-
-            mkdir -p "$DEPLOY_DIR"
-
-            # Write COMPOSE_ENV content to compose.env
             echo "${{ secrets.COMPOSE_ENV }}" > "$DEPLOY_DIR/compose.env"
-
-            # List files to verify
             ls -l "$DEPLOY_DIR"
 
-      # -- Ensure docker and docker-compose are present and start/upgrade stack
+      # -- Deploy stack
       - name: Deploy stack (docker compose up)
         uses: appleboy/ssh-action@v0.1.7
         with:
@@ -69,22 +70,15 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-
-            # Set DEPLOY_DIR with default if not provided
             DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
             if [ -z "$DEPLOY_DIR" ]; then
               DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
             fi
-
             cd "$DEPLOY_DIR"
-
-            # ensure docker is available
             if ! command -v docker >/dev/null 2>&1; then
               echo "docker not found - please install docker on the target server"
               exit 1
             fi
-
-            # use docker compose plugin if available
             if docker compose version >/dev/null 2>&1; then
               DOCKER_COMPOSE_CMD="docker compose"
             elif command -v docker-compose >/dev/null 2>&1; then
@@ -93,10 +87,6 @@ jobs:
               echo "docker compose not found - please install docker compose plugin or docker-compose binary"
               exit 1
             fi
-
-            # pull images and start
             $DOCKER_COMPOSE_CMD -f docker-compose.yml pull --ignore-pull-failures || true
             $DOCKER_COMPOSE_CMD -f docker-compose.yml up -d --remove-orphans
-
-            # show status
             $DOCKER_COMPOSE_CMD -f docker-compose.yml ps
