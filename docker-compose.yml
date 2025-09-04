@@ -12,7 +12,7 @@ volumes:
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: ghcr.io/ferretdb/postgres-documentdb
     restart: unless-stopped
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -22,32 +22,20 @@ services:
       POSTGRES_DB: postgres
     networks:
       - infra_net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${KOMODO_DB_USERNAME} -d postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     labels:
       komodo.skip: "true"
 
   ferretdb:
-    image: ghcr.io/ferretdb/ferretdb:latest
+    image: ghcr.io/ferretdb/ferretdb
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      - postgres
     volumes:
       - ferretdb-state:/state
     environment:
       FERRETDB_POSTGRESQL_URL: "postgres://${KOMODO_DB_USERNAME}:${KOMODO_DB_PASSWORD}@postgres:5432/postgres"
-      FERRETDB_LOG_LEVEL: "info"
     networks:
       - infra_net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:27017"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
     labels:
       komodo.skip: "true"
 
@@ -55,8 +43,7 @@ services:
     image: ghcr.io/moghtech/komodo-core:${COMPOSE_KOMODO_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
-      ferretdb:
-        condition: service_healthy
+      - ferretdb
     ports:
       - "9120:9120" # Komodo web UI
     env_file: ./compose.env
@@ -107,8 +94,8 @@ services:
     networks:
       - infra_net
     environment:
-      WATCHTOWER_CLEANUP: "true" # remove old images after update
-      WATCHTOWER_POLL_INTERVAL: "300" # check every 5 minutes
+      WATCHTOWER_CLEANUP: "true"          # remove old images after update
+      WATCHTOWER_POLL_INTERVAL: "300"     # check every 5 minutes
       WATCHTOWER_INCLUDE_RESTARTING: "true"
       WATCHTOWER_INCLUDE_STOPPED: "true"
     labels:
