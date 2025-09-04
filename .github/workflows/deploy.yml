@@ -23,10 +23,16 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT || 22 }}
+          port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "docker-compose.yml"
-          target: "${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}"
+          script: |
+            # Set DEPLOY_DIR with default if not provided
+            DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
+            if [ -z "$DEPLOY_DIR" ]; then
+              DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
+            fi
+          target: "$DEPLOY_DIR"
 
       # -- Write compose.env to server from secret (safe: secret isn't printed)
       - name: Write compose.env on remote host
@@ -38,16 +44,20 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-            # Use a variable for deploy dir
+
+            # Set DEPLOY_DIR with default if not provided
             DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
+            if [ -z "$DEPLOY_DIR" ]; then
+              DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
+            fi
+
             mkdir -p "$DEPLOY_DIR"
 
             # Write COMPOSE_ENV content to compose.env
-            echo "${{ secrets.COMPOSE_ENV }}" > "${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}"
+            echo "${{ secrets.COMPOSE_ENV }}" > "$DEPLOY_DIR/compose.env"
 
             # List files to verify
             ls -l "$DEPLOY_DIR"
-
 
       # -- Ensure docker and docker-compose are present and start/upgrade stack
       - name: Deploy stack (docker compose up)
@@ -55,11 +65,17 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT || 22 }}
+          port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-            DEPLOY_DIR="${{ secrets.DEPLOY_DIR:-/home/${{ secrets.SSH_USER }}/komodo }}"
+
+            # Set DEPLOY_DIR with default if not provided
+            DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
+            if [ -z "$DEPLOY_DIR" ]; then
+              DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
+            fi
+
             cd "$DEPLOY_DIR"
 
             # ensure docker is available
