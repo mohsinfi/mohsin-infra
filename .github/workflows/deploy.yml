@@ -1,8 +1,13 @@
 name: Deploy to Ubuntu Docker Host
+
 on:
   push:
     branches:
       - main
+
+  # Allow manual execution
+  workflow_dispatch:
+
 permissions:
   contents: read
   id-token: write
@@ -10,10 +15,14 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # ---------------------------------------------------
+      # Upload docker-compose.yml
+      # ---------------------------------------------------
       - name: Upload docker-compose.yml
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -22,9 +31,12 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "docker-compose.yml"
-          target: "${{ secrets.DEPLOY_DIR || format('/home/{0}/komodo', secrets.SSH_USER) }}"
+          target: "${{ secrets.DEPLOY_DIR || format('/home/{0}/infra', secrets.SSH_USER) }}"
 
-      - name: Deploy stack
+      # ---------------------------------------------------
+      # Connect to server, update OS, cleanup, redeploy
+      # ---------------------------------------------------
+      - name: Patch OS, clean, and redeploy stack
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -32,11 +44,31 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            # Determine deploy directory
             DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
             if [ -z "$DEPLOY_DIR" ]; then
-              DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/komodo"
+              DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/infra"
             fi
+
+            echo "🔧 Updating OS packages..."
+            sudo apt-get update -y
+            sudo apt-get upgrade -y
+            sudo apt-get autoremove -y
+            sudo apt-get autoclean -y
+
+            echo "🧹 Cleaning unused Docker images/containers..."
+            sudo docker system prune -af --volumes || true
+
+            echo "📁 Switching to deploy directory..."
             cd "$DEPLOY_DIR"
+
+            echo "📝 Writing compose.env"
             echo "${{ secrets.COMPOSE_ENV }}" > compose.env
-            sudo docker compose -p komodo -f docker-compose.yml --env-file compose.env pull --ignore-pull-failures || true
-            sudo docker compose -p komodo -f docker-compose.yml --env-file compose.env up -d --remove-orphans
+
+            echo "📥 Pulling latest container images..."
+            sudo docker compose -p infra -f docker-compose.yml --env-file compose.env pull --ignore-pull-failures || true
+
+            echo "🚀 Deploying updated stack..."
+            sudo docker compose -p infra -f docker-compose.yml --env-file compose.env up -d --remove-orphans
+
+            echo "✅ Deployment complete!"
