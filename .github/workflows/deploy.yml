@@ -4,9 +4,7 @@ on:
   push:
     branches:
       - main
-
-  # Allow manual execution
-  workflow_dispatch:
+  workflow_dispatch: {}   # <-- manual trigger enabled
 
 permissions:
   contents: read
@@ -20,9 +18,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # ---------------------------------------------------
-      # Upload docker-compose.yml
-      # ---------------------------------------------------
       - name: Upload docker-compose.yml
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -31,12 +26,9 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "docker-compose.yml"
-          target: "${{ secrets.DEPLOY_DIR || format('/home/{0}/infra', secrets.SSH_USER) }}"
+          target: "${{ secrets.DEPLOY_DIR || format('/home/{0}/stack', secrets.SSH_USER) }}"
 
-      # ---------------------------------------------------
-      # Connect to server, update OS, cleanup, redeploy
-      # ---------------------------------------------------
-      - name: Patch OS, clean, and redeploy stack
+      - name: Deploy stack
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -44,31 +36,57 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Determine deploy directory
+            # -----------------------------
+            # SET DEPLOY DIR
+            # -----------------------------
             DEPLOY_DIR="${{ secrets.DEPLOY_DIR }}"
             if [ -z "$DEPLOY_DIR" ]; then
-              DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/infra"
+              DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/stack"
             fi
 
-            echo "🔧 Updating OS packages..."
-            sudo apt-get update -y
-            sudo apt-get upgrade -y
-            sudo apt-get autoremove -y
-            sudo apt-get autoclean -y
-
-            echo "🧹 Cleaning unused Docker images/containers..."
-            sudo docker system prune -af --volumes || true
-
-            echo "📁 Switching to deploy directory..."
             cd "$DEPLOY_DIR"
 
-            echo "📝 Writing compose.env"
+            # -----------------------------
+            # SYSTEM UPDATE + CLEANUP
+            # -----------------------------
+            echo "🔧 Updating OS packages..."
+            sudo apt update -y && sudo apt full-upgrade -y
+            sudo apt autoremove -y
+            sudo apt autoclean -y
+
+            # -----------------------------
+            # WRITE ENV FILE
+            # -----------------------------
             echo "${{ secrets.COMPOSE_ENV }}" > compose.env
 
-            echo "📥 Pulling latest container images..."
-            sudo docker compose -p infra -f docker-compose.yml --env-file compose.env pull --ignore-pull-failures || true
+            # -----------------------------
+            # HEALTH CHECK SECTION
+            # -----------------------------
+            echo "🔍 Checking cloudflared service (tunnel)..."
+            sudo systemctl status cloudflared --no-pager || echo "⚠️ cloudflared not running!"
 
-            echo "🚀 Deploying updated stack..."
-            sudo docker compose -p infra -f docker-compose.yml --env-file compose.env up -d --remove-orphans
+            echo "📜 Last 10 cloudflared logs:"
+            sudo journalctl -u cloudflared -n 10 --no-pager
 
-            echo "✅ Deployment complete!"
+            echo "🔍 Checking if Portainer is running..."
+            sudo docker ps | grep portainer || echo "⚠️ Portainer container not running!"
+
+            echo "🔍 Checking if Portainer HTTPS port (9443) is listening..."
+            sudo ss -tulpn | grep 9443 || echo "⚠️ Port 9443 NOT listening"
+
+            echo "🔍 Curl test to Portainer..."
+            curl -vk https://localhost:9443 || echo "⚠️ Portainer not responding locally"
+
+            # -----------------------------
+            # DOCKER DEPLOYMENT
+            # -----------------------------
+            echo "🚀 Pulling latest images..."
+            sudo docker compose -p stack -f docker-compose.yml --env-file compose.env pull --ignore-pull-failures || true
+
+            echo "🚀 Deploying..."
+            sudo docker compose -p stack -f docker-compose.yml --env-file compose.env up -d --remove-orphans
+
+            echo "🧹 Cleaning unused docker images..."
+            sudo docker image prune -af
+
+            echo "✅ Deployment complete"
